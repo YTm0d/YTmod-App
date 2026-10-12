@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Custom branding",
+    "options": [
+      {
+        "key": "appName",
+        "value": "YTmod"
+      },
+      {
+        "key": "appIcon",
+        "value": "original"
+      }
+    ]
+  },
+  {
+    "name": "Change header",
+    "options": [
+      {
+        "key": "headerLogo",
+        "value": "youtube"
+      }
+    ]
+  }
+]

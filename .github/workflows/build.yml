@@ -1,0 +1,90 @@
+name: Build and Release YTmod (Windows Robust)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: 'Optional direct download URL for YouTube APK (leave blank to use APK found in repo)'
+        required: false
+        type: string
+  schedule:
+    - cron: '0 0 * * *' # Runs every day at midnight UTC
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Download Latest Morphe CLI & Patches Bundle
+        shell: pwsh
+        run: |
+          Write-Host "Querying GitHub API for the latest Morphe Desktop CLI..."
+          $cliRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
+          $cliAsset = $cliRelease.assets \vert{} Where-Object {$_.name -like "*-all.jar" } | Select-Object -First 1
+          Write-Host "Downloading Morphe CLI: $($cliAsset.name)"
+          Invoke-WebRequest -Uri $cliAsset.browser_download_url -OutFile "morphe.jar"
+
+          Write-Host "Querying GitHub API for the latest Morphe Patches (.mpp)..."
+          $patchesRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest"
+          $patchesAsset = $patchesRelease.assets \vert{} Where-Object {$_.name -like "*.mpp" } | Select-Object -First 1
+          Write-Host "Downloading Patches Bundle: $($patchesAsset.name)"
+          Invoke-WebRequest -Uri $patchesAsset.browser_download_url -OutFile "patches.mpp"
+
+      - name: Resolve Target YouTube APK
+        shell: pwsh
+        env:
+          MANUAL_URL: ${{ inputs.apk_url }}
+        run: |
+          if ($env:MANUAL_URL) {
+              Write-Host "Downloading APK from provided manual URL..."
+              $filename = [System.IO.Path]::GetFileName($env:MANUAL_URL.Split('?')[0])
+              Invoke-WebRequest -Uri $env:MANUAL_URL -OutFile$filename
+              echo "APK_FILE=$filename" >> $env:GITHUB_ENV
+          } else {
+              # Search workspace for any .apk file not named YTmod.apk
+              $foundApk = Get-ChildItem -Path . -Filter "*.apk" \vert{} Where-Object { $_.Name -ne "YTmod.apk" } | Select-Object -First 1
+              if ($foundApk) {
+                  Write-Host "Found local YouTube APK in repository: $($foundApk.Name)"
+                  echo "APK_FILE=$($foundApk.Name)" >> $env:GITHUB_ENV
+              } else {
+                  Write-Error "ERROR: No target YouTube APK found in the repository workspace and no manual URL provided! Please commit your target YouTube APK to the repo or provide a URL."
+                  exit 1
+              }
+          }
+
+      - name: Run Morphe CLI Patcher
+        shell: pwsh
+        run: |
+          $apk =$env:APK_FILE
+          Write-Host "Starting Morphe CLI patching process on: $apk"
+          
+          java -Xmx2g -XX:+UseSerialGC --enable-native-access=ALL-UNNAMED -jar morphe.jar patch `
+            -p patches.mpp `
+            -f `
+            -e "Clone app" -O "packageName=com.ytmod.gold.youtube" `
+            -e "Custom branding" -O "customName=YTmod" -O "appIcon=original" `
+            -o YTmod.apk `
+            $apk
+
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: YTmod v1.0.${{ github.run_number }}
+          body: |
+            Automated Windows daily build of YTmod (`com.ytmod.gold.youtube`).
+            - Automatically fetched the latest Morphe CLI & Patches bundle.
+            - Successfully patched target YouTube APK.
+            - Includes Ad-Free experience & MicroG support.
+          files: YTmod.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
